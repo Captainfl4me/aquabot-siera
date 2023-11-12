@@ -266,6 +266,17 @@ class Pinger:
         """ Returns the bearing of the pinger in radians. """
         return self._bearing
 
+    def get_xy(self, wamv_pos: list[float, float], wamv_heading: float) -> list[float, float]:
+        """
+        Returns the x and y coordinates of the pinger relative to the boat.
+
+        :param relative_pos: The x and y coordinates of the boat relative to the world.
+        :type relative_pos: list[float, float]
+        :return: The x and y coordinates of the pinger relative to the boat.
+        :rtype: list[float, float]
+        """
+        return [self._range * sin(self._bearing + wamv_heading) + wamv_pos[0], self._range * cos(self._bearing + wamv_heading) + wamv_pos[1]]
+
     def __str__(self) -> str:
         return f"range: {self.range}\nbearing: {self.bearing}\n"
 
@@ -306,6 +317,8 @@ class SieraNode(Node):
         self.pinger: Pinger = Pinger()
         self.imu: IMU = IMU()
         self.lidar_scan: LidarScan = LidarScan()
+        self.gps: GPS = GPS()
+        self.wamv_pose: np.array = np.zeros(3)
 
         self.task_info_sub = self.create_subscription(
             ParamVec,
@@ -331,6 +344,12 @@ class SieraNode(Node):
             self.lidar_callback,
             10)
 
+        self.gps_sub = self.create_subscription(
+            NavSatFix,
+            '/wamv/sensors/gps/gps/fix',
+            self.gps_callback,
+            10)
+
         self.last_exec = 0
         self.create_timer(0.1, self.main_loop)
         self.get_logger().info('SieraNode has been started')
@@ -342,8 +361,12 @@ class SieraNode(Node):
         """
         start_exec = time.process_time()
 
-        print(self.pinger)
-        print(f"Yaw: {self.imu.yaw}")
+        print(f"Yaw: {self.imu.yaw}rad | Rel angle: {self.pinger.bearing}rad")
+        print(f"X: {self.wamv_pose[0]}m | Y: {self.wamv_pose[1]}m | Z: {self.wamv_pose[2]}m")
+        print(f"Range: {self.pinger.range}m | Bearing: {self.pinger.bearing}rad")
+        buoy_xy = self.pinger.get_xy(self.wamv_pose, self.imu.yaw)
+        range_buoy_wamv = np.sqrt((buoy_xy[0] - self.wamv_pose[0])**2 + (buoy_xy[1] - self.wamv_pose[1])**2)
+        print(f"Buoy X: {buoy_xy[0]}m | Buoy Y: {buoy_xy[1]}m | Range: {range_buoy_wamv}m | Bearing: {atan2(buoy_xy[0] - self.wamv_pose[0], buoy_xy[1] - self.wamv_pose[1])}rad")
 
         print(f"Loop time: {(time.process_time() - start_exec) * 1000}ms")
 
@@ -362,6 +385,11 @@ class SieraNode(Node):
     def lidar_callback(self, msg: LaserScan):
         """ Callback for the lidar message. """
         self.lidar_scan.parse_from_lidar_msg(msg)
+
+    def gps_callback(self, msg: NavSatFix):
+        """ Callback for the gps message. """
+        self.gps.parse_from_gps_msg(msg)
+        self.wamv_pose = np.array(self.gps.geodetic_to_cartesian())
 
 def main(args=None):
     """ Main function. """
