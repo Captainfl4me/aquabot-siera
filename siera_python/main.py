@@ -1,28 +1,30 @@
-import rclpy
-from rclpy.node import Node
-from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor
-from enum import Enum
+""" Main file for the Siera Python package. """
 import time
-from math import cos, sin, radians, pi, atan2, asin, copysign
+from enum import Enum
+from math import pi, atan2, asin, copysign
 
 import numpy as np
-import matplotlib.pyplot as plt
+
+import rclpy
+from rclpy.node import Node
+from rclpy.executors import SingleThreadedExecutor
 
 from ros_gz_interfaces.msg import ParamVec
 from rcl_interfaces.msg import Parameter
 
-from sensor_msgs.msg import Imu
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Imu, LaserScan
 
 
 class TaskState(Enum):
-    Initial = "initial"
-    Ready = "ready"
-    Running = "running"
-    Finished = "finished"
+    """ Enum for the state of the task. """
+    INITIAL = "initial"
+    READY = "ready"
+    RUNNING = "running"
+    FINISHED = "finished"
 
 
 class TaskInfo:
+    """ Class for storing the task info. """
     currentTask = None
 
     def __init__(self):
@@ -34,11 +36,14 @@ class TaskInfo:
         self.ready_time: float = 0.0
         self.remaining_time: float = 0.0
         self.num_collisions: int = 0
-        self.state: TaskState = TaskState.Initial
+        self.state: TaskState = TaskState.INITIAL
 
         TaskInfo.currentTask: TaskInfo = self
-    
-    def parseFromParamVec(self, data_list: list[Parameter]) -> None:
+
+    def parse_from_paramvec(self, data_list: list[Parameter]) -> None:
+        """
+            Parses the data from the ParamVec message and stores it in the class.
+        """
         for data in data_list:
             if data.name == "name":
                 self.name = data.value.string_value
@@ -74,25 +79,30 @@ class TaskInfo:
 
 
 class Quaternion:
+    """ Class for storing a quaternion. """
     def __init__(self):
         self._x: float = 0.0
         self._y: float = 0.0
         self._z: float = 0.0
         self._w: float = 0.0
-    
+
     @property
     def x(self) -> float:
+        """ Returns the x value of the quaternion. """
         return self._x
     @property
     def y(self) -> float:
+        """ Returns the y value of the quaternion. """
         return self._y
     @property
     def z(self) -> float:
+        """ Returns the z value of the quaternion. """
         return self._z
     @property
     def w(self) -> float:
+        """ Returns the w value of the quaternion. """
         return self._w
-    
+
     @x.setter
     def x(self, value: float) -> None:
         self._x = value
@@ -106,7 +116,8 @@ class Quaternion:
     def w(self, value: float) -> None:
         self._w = value
 
-    def toEuler(self) -> tuple[float, float, float]:
+    def to_euler(self) -> tuple[float, float, float]:
+        """ Returns the euler angles of the quaternion. """
         sinrp = 2.0 * (self._w * self._x + self._y * self._z)
         cosrp = 1.0 - 2.0 * (self._x * self._x + self._y * self._y)
         roll = atan2(sinrp, cosrp)
@@ -116,7 +127,7 @@ class Quaternion:
             pitch = copysign(pi / 2, sinp)
         else:
             pitch = asin(sinp)
-        
+
         sinyaw = 2.0 * (self._w * self._z + self._x * self._y)
         cosyaw = 1.0 - 2.0 * (self._y * self._y + self._z * self._z)
         yaw = atan2(sinyaw, cosyaw)
@@ -125,6 +136,7 @@ class Quaternion:
 
 
 class IMU:
+    """ Class for storing the IMU data. """
     def __init__(self):
         self._quaternion: Quaternion = Quaternion()
         self._roll: float = 0.0
@@ -133,27 +145,33 @@ class IMU:
 
     @property
     def quaternion(self) -> Quaternion:
+        """ Returns the quaternion. """
         return self._quaternion
     @property
     def roll(self) -> float:
+        """ Returns the roll angle in radians. """
         return self._roll
     @property
     def pitch(self) -> float:
+        """ Returns the pitch angle in radians. """
         return self._pitch
     @property
     def yaw(self) -> float:
+        """ Returns the yaw angle in radians. """
         return self._yaw
 
-    def parseFromMsgIMU(self, data: Imu) -> None:
+    def parse_from_imu_msg(self, data: Imu) -> None:
+        """ Parses the data from the Imu message and stores it in the class. """
         self._quaternion.x = data.orientation.x
         self._quaternion.y = data.orientation.y
         self._quaternion.z = data.orientation.z
         self._quaternion.w = data.orientation.w
 
-        self._roll, self._pitch, self._yaw = self._quaternion.toEuler()
+        self._roll, self._pitch, self._yaw = self._quaternion.to_euler()
 
 
 class Pinger:
+    """ Class for storing the pinger data. """
     currentPinger = None
 
     def __init__(self):
@@ -161,20 +179,23 @@ class Pinger:
         self._bearing: float = 0.0 # in radians relative to boat (positive clockwise)
 
         Pinger.currentPinger: Pinger = self
-    
-    def parseFromParamVec(self, data_list: list[Parameter]) -> None:
+
+    def parse_from_paramvec(self, data_list: list[Parameter]) -> None:
+        """ Parses the data from the ParamVec message and stores it in the class. """
         for data in data_list:
             if data.name == "range":
                 self._range = data.value.double_value
             elif data.name == "bearing":
                 self._bearing = data.value.double_value
-    
+
     @property
     def range(self) -> float:
+        """ Returns the range of the pinger in meters. """
         return self._range
-    
+
     @property
     def bearing(self) -> float:
+        """ Returns the bearing of the pinger in radians. """
         return self._bearing
 
     def __str__(self) -> str:
@@ -182,50 +203,53 @@ class Pinger:
 
 
 class LidarScan:
+    """ Class for storing the lidar scan data. """
     def __init__(self):
         self._ranges: list[float] = []
         self._angles: list[float] = []
         self._ox: list[float] = []
         self._oy: list[float] = []
-    
+
     @property
     def ranges(self) -> list[float]:
+        """ Returns the ranges of the lidar scan. """
         return self._ranges
     @property
     def angles(self) -> list[float]:
+        """ Returns the angles of the lidar scan. """
         return self._angles
-    
-    def parseFromMsgLidar(self, data: LaserScan) -> None:
+
+    def parse_from_lidar_msg(self, data: LaserScan) -> None:
+        """ Parses the data from the LaserScan message and stores it in the class. """
         self._ranges = np.array(data.ranges)
         self._angles = np.arange(data.angle_min, data.angle_max, data.angle_increment)
         if np.size(self._ranges) != np.size(self._angles):
-            raise Exception("LidarScan: ranges and angles are not the same size!!")
+            raise ValueError("LidarScan: ranges and angles are not the same size!!")
 
         self._ox = np.sin(self._angles) * self._ranges
         self._oy = np.cos(self._angles) * self._ranges
 
 
 class SieraNode(Node):
+    """ Main node class. """
     def __init__(self):
         super().__init__('SieraNode')
         self.taskinfo: TaskInfo = TaskInfo()
         self.pinger: Pinger = Pinger()
         self.imu: IMU = IMU()
-        self.lidarScan: LidarScan = LidarScan()
+        self.lidar_scan: LidarScan = LidarScan()
 
         self.task_info_sub = self.create_subscription(
             ParamVec,
             '/vrx/task/info',
             self.taskinfo_callback,
             10)
-        self.task_info_sub  # prevent unused variable warning
 
         self.pinger_sub = self.create_subscription(
             ParamVec,
             '/wamv/sensors/acoustics/receiver/range_bearing',
             self.pinger_callback,
             10)
-        self.pinger_sub  # prevent unused variable warning
 
         self.imu_sub = self.create_subscription(
             Imu,
@@ -245,7 +269,8 @@ class SieraNode(Node):
 
     def main_loop(self):
         """
-        This is the main loop of the node. It is called every 0.1s. Loop time should be less than 100ms.
+            This is the main loop of the node. It is called every 0.1s. 
+            Loop time should be less than 100ms.
         """
         start_exec = time.process_time()
 
@@ -255,18 +280,23 @@ class SieraNode(Node):
         print(f"Loop time: {(time.process_time() - start_exec) * 1000}ms")
 
     def taskinfo_callback(self, msg: ParamVec):
-        self.taskinfo.parseFromParamVec(msg.params)
+        """ Callback for the task info message. """
+        self.taskinfo.parse_from_paramvec(msg.params)
 
     def pinger_callback(self, msg: ParamVec):
-        self.pinger.parseFromParamVec(msg.params)
+        """ Callback for the pinger message. """
+        self.pinger.parse_from_paramvec(msg.params)
 
     def imu_callback(self, msg: Imu):
-        self.imu.parseFromMsgIMU(msg)
-    
+        """ Callback for the imu message. """
+        self.imu.parse_from_imu_msg(msg)
+
     def lidar_callback(self, msg: LaserScan):
-        self.lidarScan.parseFromMsgLidar(msg)
+        """ Callback for the lidar message. """
+        self.lidar_scan.parse_from_lidar_msg(msg)
 
 def main(args=None):
+    """ Main function. """
     rclpy.init(args=args)
     try:
         siera_node = SieraNode()
