@@ -1,7 +1,7 @@
 """ Main file for the Siera Python package. """
 import time
 from enum import Enum
-from math import pi, atan2, asin, copysign
+from math import pi, atan2, asin, copysign, radians, cos, sin
 
 import numpy as np
 
@@ -12,7 +12,7 @@ from rclpy.executors import SingleThreadedExecutor
 from ros_gz_interfaces.msg import ParamVec
 from rcl_interfaces.msg import Parameter
 
-from sensor_msgs.msg import Imu, LaserScan
+from sensor_msgs.msg import Imu, LaserScan, NavSatFix
 
 
 class TaskState(Enum):
@@ -168,6 +168,74 @@ class IMU:
         self._quaternion.w = data.orientation.w
 
         self._roll, self._pitch, self._yaw = self._quaternion.to_euler()
+
+
+class GPS:
+    """ Class for storing the GPS data. """
+    def __init__(self):
+        self._latitude: float = 0.0
+        self._longitude: float = 0.0
+        self._altitude: float = 0.0
+
+        self._reference_latitude_rad: float = -1.0
+        self._reference_longitude_rad: float = -1.0
+        self._reference_altitude: float = -1.0
+        # Earth radius in meters
+        self._earth_radius: float = 6371000.0
+
+    @property
+    def latitude(self) -> float:
+        """ Returns the latitude in degrees. """
+        return self._latitude
+    @property
+    def longitude(self) -> float:
+        """ Returns the longitude in degrees. """
+        return self._longitude
+    @property
+    def altitude(self) -> float:
+        """ Returns the altitude in meters. """
+        return self._altitude
+
+    def parse_from_gps_msg(self, data: NavSatFix) -> None:
+        """
+        Parses the data from the NavSatFix message and stores it in the class.
+
+        :param data: NavSatFix message data to be parsed and stored in the class.
+        :type data: NavSatFix
+        :return: None
+        """
+        if self._reference_latitude_rad == -1.0 or self._reference_longitude_rad == -1.0 or self._reference_altitude == -1.0:
+            self._reference_latitude_rad = radians(data.latitude)
+            self._reference_longitude_rad = radians(data.longitude)
+            self._reference_altitude = data.altitude
+
+        self._latitude = data.latitude
+        self._longitude = data.longitude
+        self._altitude = data.altitude
+
+    def geodetic_to_cartesian(self):
+        """
+        Converts the geodetic coordinates to cartesian coordinates.
+        Assumes that the reference coordinates have been set and earth is perfectly round.
+        Returns the cartesian coordinates in meters.
+
+        :return: A tuple of three floats representing the cartesian coordinates in meters.
+        :raises ValueError: If the reference latitude has not been set.
+        """
+        if self._reference_latitude_rad == -1.0 or self._reference_longitude_rad == -1.0 or self._reference_altitude == -1.0:
+            raise ValueError("GPS: reference latitude has not been set!!")
+
+        latitude_rad = radians(self._latitude)
+        longitude_rad = radians(self._longitude)
+
+        x = (self._earth_radius + self._altitude - self._reference_altitude) * cos(latitude_rad - self._reference_latitude_rad) * cos(longitude_rad - self._reference_longitude_rad)
+        y = (self._earth_radius + self._altitude - self._reference_altitude) * cos(latitude_rad - self._reference_longitude_rad) * sin(longitude_rad - self._reference_longitude_rad)
+        z = (self._earth_radius + self._altitude - self._reference_altitude) * sin(latitude_rad - self._reference_latitude_rad)
+
+        return x, y, z
+
+    def __str__(self) -> str:
+        return f"latitude: {self.latitude}\nlongitude: {self.longitude}\naltitude: {self.altitude}\n"
 
 
 class Pinger:
