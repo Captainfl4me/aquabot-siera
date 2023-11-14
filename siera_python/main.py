@@ -281,34 +281,6 @@ class Pinger:
         return f"range: {self.range}\nbearing: {self.bearing}\n"
 
 
-class LidarScan:
-    """ Class for storing the lidar scan data. """
-    def __init__(self):
-        self._ranges: list[float] = []
-        self._angles: list[float] = []
-        self._ox: list[float] = []
-        self._oy: list[float] = []
-
-    @property
-    def ranges(self) -> list[float]:
-        """ Returns the ranges of the lidar scan. """
-        return self._ranges
-    @property
-    def angles(self) -> list[float]:
-        """ Returns the angles of the lidar scan. """
-        return self._angles
-
-    def parse_from_lidar_msg(self, data: LaserScan) -> None:
-        """ Parses the data from the LaserScan message and stores it in the class. """
-        self._ranges = np.array(data.ranges)
-        self._angles = np.arange(data.angle_min, data.angle_max, data.angle_increment)
-        if np.size(self._ranges) != np.size(self._angles):
-            raise ValueError("LidarScan: ranges and angles are not the same size!!")
-
-        self._ox = np.sin(self._angles) * self._ranges
-        self._oy = np.cos(self._angles) * self._ranges
-
-
 class SieraNode(Node):
     """ Main node class. """
     def __init__(self):
@@ -316,7 +288,6 @@ class SieraNode(Node):
         self.taskinfo: TaskInfo = TaskInfo()
         self.pinger: Pinger = Pinger()
         self.imu: IMU = IMU()
-        self.lidar_scan: LidarScan = LidarScan()
         self.gps: GPS = GPS()
         self.wamv_pose: np.array = np.zeros(3)
 
@@ -336,12 +307,6 @@ class SieraNode(Node):
             Imu,
             '/wamv/sensors/imu/imu/data',
             self.imu_callback,
-            10)
-
-        self.lidar_sub = self.create_subscription(
-            LaserScan,
-            '/wamv/sensors/lidars/lidar_wamv_sensor/scan',
-            self.lidar_callback,
             10)
 
         self.gps_sub = self.create_subscription(
@@ -381,10 +346,6 @@ class SieraNode(Node):
     def imu_callback(self, msg: Imu):
         """ Callback for the imu message. """
         self.imu.parse_from_imu_msg(msg)
-
-    def lidar_callback(self, msg: LaserScan):
-        """ Callback for the lidar message. """
-        self.lidar_scan.parse_from_lidar_msg(msg)
 
     def gps_callback(self, msg: NavSatFix):
         """ Callback for the gps message. """

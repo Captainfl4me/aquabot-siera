@@ -20,7 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'test = siera_python.main:main'
+            'main = siera_python.main:main',
+            'gridmap = siera_python.gridmap:main',
         ],
     },
 )
