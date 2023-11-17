@@ -26,10 +26,12 @@ class GridmapNode(Node):
             OccupancyGrid,
             '/siera/gridmap',
             10)
+        
+        self.get_logger().info("Gridmap node initialized.")
 
     def lidar_callback(self, msg: LaserScan):
         """ Callback for the lidar message. """
-        self.get_logger().info("LidarScan received.")
+        # self.get_logger().info("LidarScan received.")
         ranges = np.array(msg.ranges)
         angles = np.arange(msg.angle_min, msg.angle_max, msg.angle_increment)
         # Remove values below range_min or above range_max
@@ -41,7 +43,7 @@ class GridmapNode(Node):
             raise ValueError("LidarScan: ranges and angles are not the same size!!")
 
         if np.size(ranges) == 0:
-            self.get_logger().info("No data in the lidar scan.")
+            # self.get_logger().info("No data in the lidar scan.")
             return
 
         ox = np.sin(angles) * ranges
@@ -49,7 +51,7 @@ class GridmapNode(Node):
         xyreso = 2  # x-y grid resolution [m]
         yawreso = np.deg2rad(1)  # yaw angle resolution [rad]
         pmap, minx, maxx, miny, maxy, xyreso = generate_ray_casting_grid_map(ox, oy, xyreso, yawreso, max_range=130.0)
-        self.get_logger().info("Gridmap computed.")
+        # self.get_logger().info("Gridmap computed.")
 
         gridmap_msg = OccupancyGrid()
         gridmap_msg.header.stamp = self.get_clock().now().to_msg()
@@ -67,7 +69,7 @@ class GridmapNode(Node):
         gridmap_msg.data = pmap.flatten().tolist()
 
         self.occupancy_grid_pub.publish(gridmap_msg)
-        self.get_logger().info("Gridmap published.")
+        # self.get_logger().info("Gridmap published.")
 
 
 

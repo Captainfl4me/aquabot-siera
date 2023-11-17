@@ -1,120 +1,215 @@
 """
-Raycasting grid map library
 
-orignal author: Atsushi Sakai (@Atsushi_twi)
-Reworked and fix: Nicolas THIERRY
+A* grid planning
+
+author: Atsushi Sakai(@Atsushi_twi)
+        Nikos Kanargias (nkana@tee.gr)
+reworked by: Nicolas THIERRY
+
+See Wikipedia article (https://en.wikipedia.org/wiki/A*_search_algorithm)
 
 """
 
 import math
-import numpy as np
+
 import matplotlib.pyplot as plt
-
-EXTEND_AREA = 10.0
-
-
-def calc_grid_map_config(max_range: float, xyreso: float):
-    minx = -max_range - EXTEND_AREA / 2.0
-    maxx = max_range + EXTEND_AREA / 2.0
-    miny = -max_range - EXTEND_AREA / 2.0
-    maxy = max_range + EXTEND_AREA / 2.0
-    xw = int(round((maxx - minx) / xyreso))
-    yw = int(round((maxy - miny) / xyreso))
-
-    return minx, miny, maxx, maxy, xw, yw
+import numpy as np
+from siera_python.raycasting_grid_map import generate_ray_casting_grid_map, draw_heatmap
 
 
-class precastDB:
-    def __init__(self):
-        self.px = 0.0
-        self.py = 0.0
-        self.d = 0.0
-        self.angle = 0.0
-        self.ix = 0
-        self.iy = 0
+class AStarPlanner:
 
-    def __str__(self):
-        return str(self.px) + "," + str(self.py) + "," + str(self.d) + "," + str(self.angle)
+    def __init__(self, pmap: list[int, int], min_x: float, max_x: float, min_y: float, max_y: float, resolution):
+        """
+        Initialize grid map for a star planning
+
+        ox: x position list of Obstacles [m]
+        oy: y position list of Obstacles [m]
+        resolution: grid resolution [m]
+        """
+
+        self.resolution = resolution
+
+        self.min_x = min_x
+        self.min_y = min_y
+        self.max_x = max_x
+        self.max_y = max_y
+        self.x_width = round((self.max_x - self.min_x) / self.resolution)
+        self.y_width = round((self.max_y - self.min_y) / self.resolution)
+
+        self.motion = self.get_motion_model()
+        self.obstacle_map = pmap
+
+    def update_map(self, pmap: list[int, int]):
+        self.obstacle_map = pmap
+
+    class Node:
+        def __init__(self, x, y, cost, parent_index):
+            self.x = x  # index of grid
+            self.y = y  # index of grid
+            self.cost = cost
+            self.parent_index = parent_index
+
+        def __str__(self):
+            return str(self.x) + "," + str(self.y) + "," + str(
+                self.cost) + "," + str(self.parent_index)
+
+    def planning(self, sx, sy, gx, gy):
+        """
+        A star path search
+
+        input:
+            s_x: start x position [m]
+            s_y: start y position [m]
+            gx: goal x position [m]
+            gy: goal y position [m]
+
+        output:
+            rx: x position list of the final path
+            ry: y position list of the final path
+        """
+
+        start_node = self.Node(self.calc_xy_index(sx, self.min_x),
+                               self.calc_xy_index(sy, self.min_y), 0.0, -1)
+        goal_node = self.Node(self.calc_xy_index(gx, self.min_x),
+                              self.calc_xy_index(gy, self.min_y), 0.0, -1)
+
+        open_set, closed_set = dict(), dict()
+        open_set[self.calc_grid_index(start_node)] = start_node
+        while True:
+            if len(open_set) == 0:
+                print("Open set is empty..")
+                break
+
+            c_id = min(
+                open_set,
+                key=lambda o: open_set[o].cost + self.calc_heuristic(goal_node,
+                                                                     open_set[
+                                                                         o]))
+            current = open_set[c_id]
+
+            # show graph
+            if False:  # pragma: no cover
+                plt.plot(self.calc_grid_position(current.x, self.min_x),
+                         self.calc_grid_position(current.y, self.min_y), "xc")
+                # for stopping simulation with the esc key.
+                plt.gcf().canvas.mpl_connect('key_release_event',
+                                             lambda event: [exit(
+                                                 0) if event.key == 'escape' else None])
+                if len(closed_set.keys()) % 10 == 0:
+                    plt.pause(0.001)
 
 
-def atan_zero_to_twopi(y, x):
-    angle = math.atan2(y, x)
-    if angle < 0.0:
-        angle += math.pi * 2.0
+            if current.x == goal_node.x and current.y == goal_node.y:
+                print("Find goal")
+                goal_node.parent_index = current.parent_index
+                goal_node.cost = current.cost
+                break
 
-    return angle
+            # Remove the item from the open set
+            del open_set[c_id]
 
+            # Add it to the closed set
+            closed_set[c_id] = current
 
-def precasting(minx, miny, xw, yw, xyreso, yawreso):
+            # expand_grid search grid based on motion model
+            for i, _ in enumerate(self.motion):
+                node = self.Node(current.x + self.motion[i][0],
+                                 current.y + self.motion[i][1],
+                                 current.cost + self.motion[i][2], c_id)
+                n_id = self.calc_grid_index(node)
 
-    precast = [[] for i in range(int(round((math.pi * 2.0) / yawreso)) + 1)]
+                # If the node is not safe, do nothing
+                if not self.verify_node(node):
+                    continue
 
-    for ix in range(xw):
-        for iy in range(yw):
-            px = ix * xyreso + minx
-            py = iy * xyreso + miny
+                if n_id in closed_set:
+                    continue
 
-            d = math.hypot(px, py)
-            angle = atan_zero_to_twopi(py, px)
-            angleid = int(math.floor(angle / yawreso))
+                if n_id not in open_set:
+                    open_set[n_id] = node  # discovered a new node
+                else:
+                    if open_set[n_id].cost > node.cost:
+                        # This path is the best until now. record it
+                        open_set[n_id] = node
 
-            pc = precastDB()
+        rx, ry = self.calc_final_path(goal_node, closed_set)
 
-            pc.px = px
-            pc.py = py
-            pc.d = d
-            pc.ix = ix
-            pc.iy = iy
-            pc.angle = angle
+        return rx, ry
 
-            precast[angleid].append(pc)
+    def calc_final_path(self, goal_node, closed_set):
+        # generate final course
+        rx, ry = [self.calc_grid_position(goal_node.x, self.min_x)], [
+            self.calc_grid_position(goal_node.y, self.min_y)]
+        parent_index = goal_node.parent_index
+        while parent_index != -1:
+            n = closed_set[parent_index]
+            rx.append(self.calc_grid_position(n.x, self.min_x))
+            ry.append(self.calc_grid_position(n.y, self.min_y))
+            parent_index = n.parent_index
 
-    return precast
+        return rx, ry
 
+    @staticmethod
+    def calc_heuristic(n1, n2):
+        w = 1.0  # weight of heuristic
+        d = w * math.hypot(n1.x - n2.x, n1.y - n2.y)
+        return d
 
-def generate_ray_casting_grid_map(ox, oy, xyreso: float, yawreso: float, max_range: float=130.0, robot_radius: float=0.0):
+    def calc_grid_position(self, index, min_position):
+        """
+        calc grid position
 
-    minx, miny, maxx, maxy, xw, yw = calc_grid_map_config(max_range, xyreso)
+        :param index:
+        :param min_position:
+        :return:
+        """
+        pos = index * self.resolution + min_position
+        return pos
 
-    pmap = np.zeros((xw, yw), dtype=int)
+    def calc_xy_index(self, position, min_pos):
+        return round((position - min_pos) / self.resolution)
 
-    precast = precasting(minx, miny, xw, yw, xyreso, yawreso)
+    def calc_grid_index(self, node):
+        return (node.y - self.min_y) * self.x_width + (node.x - self.min_x)
 
-    for (x, y) in zip(ox, oy):
+    def verify_node(self, node):
+        px = self.calc_grid_position(node.x, self.min_x)
+        py = self.calc_grid_position(node.y, self.min_y)
 
-        d = math.hypot(x, y)
-        angle = atan_zero_to_twopi(y, x)
-        angleid = int(math.floor(angle / yawreso))
+        if px < self.min_x:
+            return False
+        elif py < self.min_y:
+            return False
+        elif px >= self.max_x:
+            return False
+        elif py >= self.max_y:
+            return False
 
-        gridlist = precast[angleid]
+        # collision check
+        if self.obstacle_map[node.x][node.y] == 100:
+            return False
 
-        ix = int(round((x - minx) / xyreso))
-        iy = int(round((y - miny) / xyreso))
+        return True
 
-        robot_radius = 4
-        for grid in gridlist:
-            if grid.d > d:
-                pmap[grid.ix][grid.iy] = -1
-            if grid.d < d and grid.d > d - robot_radius:
-                pmap[grid.ix][grid.iy] = 100
+    @staticmethod
+    def get_motion_model():
+        # dx, dy, cost
+        motion = [[1, 0, 1],
+                  [0, 1, 1],
+                  [-1, 0, 1],
+                  [0, -1, 1],
+                  [-1, -1, math.sqrt(2)],
+                  [-1, 1, math.sqrt(2)],
+                  [1, -1, math.sqrt(2)],
+                  [1, 1, math.sqrt(2)]]
 
-        pmap[ix][iy] = 100
-
-    return pmap, minx, maxx, miny, maxy, xyreso
-
-
-def draw_heatmap(data, minx, maxx, miny, maxy, xyreso):
-    x, y = np.mgrid[slice(minx - xyreso / 2.0, maxx + xyreso / 2.0, xyreso),
-                    slice(miny - xyreso / 2.0, maxy + xyreso / 2.0, xyreso)]
-    plt.pcolor(x, y, data, vmax=1.0, cmap=plt.cm.Blues)
-    plt.axis("equal")
+        return motion
 
 
 def main():
     print(__file__ + " start!!")
 
-    xyreso = 0.5  # x-y grid resolution [m]
-    yawreso = np.deg2rad(10.0)  # yaw angle resolution [rad]
 
     ox = [  -2.93217606,   -3.25401621,   -3.57484402,   -3.89469084,
          -4.21396058,   -4.53217398,   -4.8561529 ,   -5.17372125,
@@ -223,17 +318,29 @@ def main():
          28.20885009,   31.87267211,   32.1806453 ,   32.61255232,
          33.02067049,   33.49310683]
 
+    # start and goal position
+    sx = 0.0  # [m]
+    sy = 0.0  # [m]
+    gx = -120.0  # [m]
+    gy = -90.0  # [m]
+    robot_radius = 10.0  # [m]
+    xyreso = 2  # x-y grid resolution [m]
+    yawreso = np.deg2rad(1.0)  # yaw angle resolution [rad]
+
     pmap, minx, maxx, miny, maxy, xyreso = generate_ray_casting_grid_map(
-        ox, oy, xyreso, yawreso)
+        ox, oy, xyreso, yawreso, robot_radius=robot_radius)
     print(np.shape(pmap))
+    a_star = AStarPlanner(pmap, minx, maxx, miny, maxy, xyreso)
+    rx, ry = a_star.planning(sx, sy, gx, gy)
 
     plt.cla()
-    # for stopping simulation with the esc key.
-    plt.gcf().canvas.mpl_connect('key_release_event',
-            lambda event: [exit(0) if event.key == 'escape' else None])
     draw_heatmap(pmap, minx, maxx, miny, maxy, xyreso)
-    plt.plot(ox, oy, "xr")
-    plt.plot(0.0, 0.0, "ob")
+    plt.plot(ox, oy, ".k")
+    plt.plot(sx, sy, "og")
+    plt.plot(gx, gy, "xb")
+    plt.plot(rx, ry, "-r")
+    plt.grid(True)
+    plt.axis("equal")
     plt.show()
 
 

@@ -12,7 +12,11 @@ from rclpy.executors import SingleThreadedExecutor
 from ros_gz_interfaces.msg import ParamVec
 from rcl_interfaces.msg import Parameter
 
-from sensor_msgs.msg import Imu, LaserScan, NavSatFix
+from sensor_msgs.msg import Imu, NavSatFix
+from nav_msgs.msg import OccupancyGrid, Path
+from geometry_msgs.msg import PoseStamped
+
+from siera_python.astar import AStarPlanner
 
 
 class TaskState(Enum):
@@ -266,7 +270,15 @@ class Pinger:
         """ Returns the bearing of the pinger in radians. """
         return self._bearing
 
-    def get_xy(self, wamv_pos: list[float, float], wamv_heading: float) -> list[float, float]:
+    def get_xy(self) -> tuple[float, float]:
+        """
+        Returns the x and y coordinates of the pinger relative to the boat.
+
+        :return: The x and y coordinates of the pinger relative to the boat.
+        """
+        return (self._range * sin(self._bearing), self._range * cos(self._bearing))
+
+    def get_abs_xy(self, wamv_pos: list[float, float], wamv_heading: float) -> list[float, float]:
         """
         Returns the x and y coordinates of the pinger relative to the boat.
 
@@ -286,10 +298,12 @@ class SieraNode(Node):
     def __init__(self):
         super().__init__('SieraNode')
         self.taskinfo: TaskInfo = TaskInfo()
+        self._mission_state: int = 0
         self.pinger: Pinger = Pinger()
         self.imu: IMU = IMU()
         self.gps: GPS = GPS()
         self.wamv_pose: np.array = np.zeros(3)
+        self.path_planner = AStarPlanner(None, -130.0, 130.0, -130.0, 130.0, 2.0)
 
         self.task_info_sub = self.create_subscription(
             ParamVec,
@@ -315,6 +329,17 @@ class SieraNode(Node):
             self.gps_callback,
             10)
 
+        self.grid_sub = self.create_subscription(
+            OccupancyGrid,
+            '/siera/gridmap',
+            self.grid_callback,
+            10)
+
+        self.path_pub = self.create_publisher(
+            Path,
+            '/siera/path',
+            10)
+
         self.last_exec = 0
         self.create_timer(0.1, self.main_loop)
         self.get_logger().info('SieraNode has been started')
@@ -326,14 +351,37 @@ class SieraNode(Node):
         """
         start_exec = time.process_time()
 
-        print(f"Yaw: {self.imu.yaw}rad | Rel angle: {self.pinger.bearing}rad")
-        print(f"X: {self.wamv_pose[0]}m | Y: {self.wamv_pose[1]}m | Z: {self.wamv_pose[2]}m")
-        print(f"Range: {self.pinger.range}m | Bearing: {self.pinger.bearing}rad")
-        buoy_xy = self.pinger.get_xy(self.wamv_pose, self.imu.yaw)
-        range_buoy_wamv = np.sqrt((buoy_xy[0] - self.wamv_pose[0])**2 + (buoy_xy[1] - self.wamv_pose[1])**2)
-        print(f"Buoy X: {buoy_xy[0]}m | Buoy Y: {buoy_xy[1]}m | Range: {range_buoy_wamv}m | Bearing: {atan2(buoy_xy[0] - self.wamv_pose[0], buoy_xy[1] - self.wamv_pose[1])}rad")
+        self.get_logger().info(f"Yaw: {self.imu.yaw}rad | Rel angle: {self.pinger.bearing}rad")
+        self.get_logger().info(f"X: {self.wamv_pose[0]}m | Y: {self.wamv_pose[1]}m | Z: {self.wamv_pose[2]}m")
 
-        print(f"Loop time: {(time.process_time() - start_exec) * 1000}ms")
+        if self._mission_state == 0:
+            # Find the buoy
+            (buoy_x, buoy_y) = self.pinger.get_xy()
+            range_buoy_wamv = np.sqrt(buoy_x**2 + buoy_y**2)
+            self.get_logger().info(f"Range: {self.pinger.range}m | Bearing: {self.pinger.bearing}rad")
+            self.get_logger().info(f"Buoy X: {buoy_x}m | Buoy Y: {buoy_y}m | Range: {range_buoy_wamv}m | Bearing: {atan2(buoy_x, buoy_y)}rad")
+            target_x = buoy_x
+            target_y = buoy_y
+            map_size = 130.0
+            if abs(buoy_x) > map_size or abs(buoy_y) > map_size:
+                u = max(abs(buoy_x), abs(buoy_y))
+                target_x = (buoy_x / u) * map_size
+                target_y = (buoy_y / u) * map_size
+            
+            rx, ry = self.path_planner.planning(0.0, 0.0, target_x, target_y)
+            path = Path()
+            path.header.stamp = self.get_clock().now().to_msg()
+            path.header.frame_id = "wamv/wamv/base_link"
+            for i, pose_x in enumerate(rx):
+                pose = PoseStamped()
+                pose.header.stamp = self.get_clock().now().to_msg()
+                pose.header.frame_id = "wamv/wamv/base_link"
+                pose.pose.position.x = pose_x
+                pose.pose.position.y = ry[i]
+                path.poses.append(pose)
+            self.path_pub.publish(path)
+
+        self.get_logger().info(f"Loop time: {(time.process_time() - start_exec) * 1000}ms")
 
     def taskinfo_callback(self, msg: ParamVec):
         """ Callback for the task info message. """
@@ -351,6 +399,10 @@ class SieraNode(Node):
         """ Callback for the gps message. """
         self.gps.parse_from_gps_msg(msg)
         self.wamv_pose = np.array(self.gps.geodetic_to_cartesian())
+
+    def grid_callback(self, msg: OccupancyGrid):
+        """ Callback for the grid message. """
+        self.path_planner.update_map(np.reshape(msg.data, (-1, msg.info.height)))
 
 def main(args=None):
     """ Main function. """
