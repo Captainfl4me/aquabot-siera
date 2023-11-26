@@ -1,0 +1,8 @@
+slprj/
+aquabot_main_ert_rtw/
+src/
+matlab_msg_gen/
+
+*.slxc
+*.mexa64
+*.tgz
