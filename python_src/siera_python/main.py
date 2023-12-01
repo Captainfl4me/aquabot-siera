@@ -8,7 +8,7 @@ from rclpy.executors import SingleThreadedExecutor
 
 from ros_gz_interfaces.msg import ParamVec
 from rcl_interfaces.msg import Parameter
-from std_msgs.msg import Float64
+from std_msgs.msg import Float64, Int64
 
 
 class TaskState(Enum):
@@ -17,7 +17,19 @@ class TaskState(Enum):
     READY = "ready"
     RUNNING = "running"
     FINISHED = "finished"
-
+    
+    def to_int(self) -> int:
+        """ Returns the int value of the enum. """
+        if self == TaskState.INITIAL:
+            return 0
+        elif self == TaskState.READY:
+            return 1
+        elif self == TaskState.RUNNING:
+            return 2
+        elif self == TaskState.FINISHED:
+            return 3
+        else:
+            return -1
 
 class TaskInfo:
     """ Class for storing the task info. """
@@ -141,12 +153,18 @@ class SieraConvertNode(Node):
             Float64,
             '/siera/pinger/bearing',
             10)
+        self.task_state_pub = self.create_publisher(
+            Int64,
+            '/siera/task/state',
+            10)
 
         self.get_logger().info('SieraConvertNode has been started')
 
     def taskinfo_callback(self, msg: ParamVec):
         """ Callback for the task info message. """
         self.taskinfo.parse_from_paramvec(msg.params)
+        self.task_state_pub.publish(Int64(data=self.taskinfo.state.to_int()))
+        self.get_logger().info(f"CurrentPoint:\n{self.taskinfo.score}")
 
     def pinger_callback(self, msg: ParamVec):
         """ Callback for the pinger message. """
